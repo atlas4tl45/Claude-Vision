@@ -17,6 +17,8 @@ public struct ToolCallItem: Sendable, Hashable {
     public var result: String?
     public var resultTruncated: Bool
     public var parentToolUseId: String?
+    /// Unified diff of the change this call made (Edit/Write), once applied.
+    public var editDiff: String?
 }
 
 public struct PermissionItem: Sendable, Hashable {
@@ -87,6 +89,8 @@ public struct Transcript: Sendable, Hashable {
     public private(set) var items: [TranscriptItem] = []
     public private(set) var lastSeq: Int = 0
     public private(set) var state: SessionState?
+    /// Every applied file edit, oldest first (for the diff window).
+    public private(set) var fileEdits: [FileEditItem] = []
 
     private var textIndex: [String: Int] = [:]
     private var toolIndex: [String: Int] = [:]
@@ -102,14 +106,6 @@ public struct Transcript: Sendable, Hashable {
     public var pendingPermissions: [PermissionItem] {
         items.compactMap {
             if case .permission(let p) = $0.kind, p.isPending { return p }
-            return nil
-        }
-    }
-
-    /// File edits, oldest first.
-    public var fileEdits: [FileEditItem] {
-        items.compactMap {
-            if case .fileEdit(let f) = $0.kind { return f }
             return nil
         }
     }
@@ -167,7 +163,7 @@ public struct Transcript: Sendable, Hashable {
                 toolIndex[e.toolUseId] = items.count
                 append(id: "tool-\(e.toolUseId)", seq: seq, ts: ts, .tool(ToolCallItem(
                     toolUseId: e.toolUseId, name: e.name, input: e.input, status: .running,
-                    result: nil, resultTruncated: false, parentToolUseId: e.parentToolUseId
+                    result: nil, resultTruncated: false, parentToolUseId: e.parentToolUseId, editDiff: nil
                 )))
             }
 
@@ -183,14 +179,19 @@ public struct Transcript: Sendable, Hashable {
                 append(id: "tool-\(e.toolUseId)", seq: seq, ts: ts, .tool(ToolCallItem(
                     toolUseId: e.toolUseId, name: e.name ?? "Tool", input: .object([:]),
                     status: e.isError ? .failed : .succeeded, result: e.content,
-                    resultTruncated: e.truncated ?? false, parentToolUseId: e.parentToolUseId
+                    resultTruncated: e.truncated ?? false, parentToolUseId: e.parentToolUseId, editDiff: nil
                 )))
             }
 
         case .fileEdit(let e):
-            append(id: "edit-\(seq)", seq: seq, ts: ts, .fileEdit(FileEditItem(
-                toolUseId: e.toolUseId, path: e.path, diff: e.diff, created: e.created ?? false
-            )))
+            let edit = FileEditItem(toolUseId: e.toolUseId, path: e.path, diff: e.diff, created: e.created ?? false)
+            fileEdits.append(edit)
+            if toolIndex[e.toolUseId] != nil {
+                // Shown on the tool card that made the change.
+                updateTool(e.toolUseId) { $0.editDiff = e.diff }
+            } else {
+                append(id: "edit-\(seq)", seq: seq, ts: ts, .fileEdit(edit))
+            }
 
         case .permissionRequest(let e):
             permissionIndex[e.requestId] = items.count

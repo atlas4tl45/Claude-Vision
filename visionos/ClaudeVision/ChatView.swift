@@ -37,10 +37,19 @@ struct ChatView: View {
                 }
             }
 
+            if let pending = transcript.pendingPermissions.first {
+                PermissionCard(permission: pending, sessionId: session.id, queued: transcript.pendingPermissions.count - 1)
+                    .id(pending.requestId)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             ComposerView(sessionId: session.id)
                 .padding(.horizontal, 24)
                 .padding(.vertical, 16)
         }
+        .animation(.snappy, value: transcript.pendingPermissions.first?.requestId)
         .navigationTitle(session.title)
         .toolbar {
             ToolbarItemGroup(placement: .bottomOrnament) {

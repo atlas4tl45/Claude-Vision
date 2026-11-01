@@ -12,9 +12,9 @@ struct TranscriptItemView: View {
         case .assistant(let text, let isComplete, let parent):
             AssistantMessageView(text: text, isComplete: isComplete, isSubagent: parent != nil)
         case .tool(let tool):
-            ToolCallRow(tool: tool)
+            ToolCallCard(tool: tool)
         case .permission(let permission):
-            PermissionRow(permission: permission, sessionId: sessionId)
+            PermissionRecordRow(permission: permission)
         case .fileEdit(let edit):
             FileEditRow(edit: edit)
         case .turnComplete(let summary):
@@ -102,28 +102,7 @@ struct CodeBlockView: View {
     }
 }
 
-// MARK: - Tools (compact rows; full cards arrive in milestone 4)
-
-struct ToolCallRow: View {
-    let tool: ToolCallItem
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ToolStatusIcon(status: tool.status)
-            Text(tool.name)
-                .font(.callout.weight(.semibold))
-            Text(tool.summary)
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
+// MARK: - Tool helpers
 
 struct ToolStatusIcon: View {
     let status: ToolCallStatus
@@ -151,61 +130,6 @@ extension ToolCallItem {
             }
         }
         return ""
-    }
-}
-
-struct PermissionRow: View {
-    @Environment(AppModel.self) private var model
-    let permission: PermissionItem
-    let sessionId: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(permission.title ?? "Claude wants to use \(permission.toolName)", systemImage: "hand.raised.fill")
-                .font(.headline)
-            if let command = permission.input["command"]?.stringValue {
-                Text(command)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-            } else if let path = permission.input["file_path"]?.stringValue {
-                Text(path)
-                    .font(.system(.body, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-            }
-            if let decision = permission.decision {
-                Label(resolutionText(decision), systemImage: decision == .allow ? "checkmark.circle" : "xmark.circle")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 16) {
-                    Button(role: .destructive) {
-                        Task { await model.respond(to: permission, in: sessionId, decision: .deny) }
-                    } label: {
-                        Text("Deny").frame(minWidth: 100, minHeight: 44)
-                    }
-                    Button {
-                        Task { await model.respond(to: permission, in: sessionId, decision: .allow) }
-                    } label: {
-                        Text("Approve").frame(minWidth: 100, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .disabled(!model.isConnected)
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(permission.isPending ? 0.2 : 0.06), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private func resolutionText(_ decision: PermissionDecision) -> String {
-        let verb = decision == .allow ? "Approved" : "Denied"
-        switch permission.resolvedBy {
-        case .auto: return "\(verb) automatically"
-        case .cancelled: return "Cancelled"
-        default: return verb
-        }
     }
 }
 

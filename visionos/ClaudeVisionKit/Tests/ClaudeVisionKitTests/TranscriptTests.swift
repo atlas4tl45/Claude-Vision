@@ -53,6 +53,8 @@ struct TranscriptTests {
         #expect(t.pendingPermissions.isEmpty)
         #expect(t.fileEdits.map(\.path) == ["notes.txt"])
         #expect(t.fileEdits[0].created)
+        #expect(tools[0].editDiff?.contains("+alpha") == true, "edit diff attaches to its tool card")
+        #expect(!t.items.contains { if case .fileEdit = $0.kind { return true } else { return false } })
         #expect(t.commandRuns.map(\.command) == ["rm -rf build"])
         #expect(t.state == .stopped)
     }
