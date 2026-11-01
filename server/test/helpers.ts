@@ -21,8 +21,9 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function startHarness(opts: { backend?: AgentBackend; store?: SessionStore } = {}): Promise<Harness> {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), "cv-test-")));
+export async function startHarness(opts: { backend?: AgentBackend; store?: SessionStore; base?: string } = {}): Promise<Harness> {
+  const ownsBase = !opts.base;
+  const base = opts.base ?? realpathSync(mkdtempSync(join(tmpdir(), "cv-test-")));
   const root = join(base, "Projects");
   mkdirSync(join(root, "demo"), { recursive: true });
   const store = opts.store ?? new MemoryStore();
@@ -43,7 +44,7 @@ export async function startHarness(opts: { backend?: AgentBackend; store?: Sessi
     async close() {
       sessions.stopAll();
       await server.close();
-      rmSync(base, { recursive: true, force: true });
+      if (ownsBase) rmSync(base, { recursive: true, force: true });
     },
   };
 }

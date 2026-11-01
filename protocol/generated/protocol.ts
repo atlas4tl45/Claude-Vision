@@ -69,7 +69,7 @@ export type SessionList = {
   reqId?: string;
 };
 
-/** Subscribe to a session's event stream. Events with seq > afterSeq are replayed first, then live events follow. Resumes the agent if the session is stopped but resumable. */
+/** Subscribe to a session's event stream. Events with seq > afterSeq are replayed first, then `session.subscribed`, then live events. Subscribing does not start the agent; a stopped session resumes its Agent SDK conversation on the next `session.send`. */
 export type SessionSubscribe = {
   v: ProtocolVersion;
   type: "session.subscribe";

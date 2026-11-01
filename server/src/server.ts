@@ -149,6 +149,8 @@ class Connection {
         this.sessions.get(msg.sessionId).setAutoApproveEdits(msg.enabled);
         return this.send({ v: 1, type: "ack", ...reqId, sessionId: msg.sessionId });
       case "permission.respond":
+        this.sessions.get(msg.sessionId).respondPermission(msg.requestId, msg.decision, msg.message);
+        return this.send({ v: 1, type: "ack", ...reqId, sessionId: msg.sessionId });
       case "fs.list":
       case "fs.read":
         return this.error("bad_request", `${msg.type} is not implemented yet`, msg.reqId);

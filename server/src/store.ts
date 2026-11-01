@@ -13,6 +13,8 @@ export interface SessionStore {
   listSessions(): SessionRecord[];
   appendEvent(event: SessionEvent): void;
   eventsAfter(sessionId: string, afterSeq: number, limit?: number): SessionEvent[];
+  /** permission.request events with no matching permission.resolved. */
+  pendingPermissionRequests(sessionId: string): SessionEvent[];
   close(): void;
 }
 
@@ -42,6 +44,11 @@ export class MemoryStore implements SessionStore {
   }
   eventsAfter(sessionId: string, afterSeq: number, limit = Infinity) {
     return (this.events.get(sessionId) ?? []).filter((e) => (e.seq ?? 0) > afterSeq).slice(0, limit);
+  }
+  pendingPermissionRequests(sessionId: string) {
+    const all = this.events.get(sessionId) ?? [];
+    const resolved = new Set(all.flatMap((e) => (e.type === "permission.resolved" ? [e.requestId] : [])));
+    return all.filter((e) => e.type === "permission.request" && !resolved.has(e.requestId));
   }
   close() {}
 }

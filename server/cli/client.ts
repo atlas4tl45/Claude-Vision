@@ -46,6 +46,34 @@ const pending = new Map<string, (m: ServerMessage) => void>();
 let sessionId: string | undefined = values.session;
 let rl: ReturnType<typeof createInterface> | undefined;
 let midLine = false;
+let subscribed = false;
+const answered = new Set<string>();
+const permissionQueue: Extract<ServerMessage, { type: "permission.request" }>[] = [];
+let asking = false;
+
+/** Ask y/n for each live permission request, one at a time. --yes approves everything. */
+async function answerPermissions() {
+  if (asking) return;
+  asking = true;
+  while (permissionQueue.length) {
+    const req = permissionQueue.shift()!;
+    if (answered.has(req.requestId)) continue;
+    if (req.diff) line(req.diff.trimEnd());
+    let allow = values.yes;
+    if (!allow) {
+      const q = createInterface({ input: process.stdin, output: process.stdout });
+      const ans: string = await new Promise((r) => q.question(`Allow ${req.toolName}? [y/N] `, r));
+      q.close();
+      allow = /^y(es)?$/i.test(ans.trim());
+    } else {
+      line(dim(`[auto-approving ${req.toolName} (--yes)]`));
+    }
+    if (!answered.has(req.requestId)) {
+      await send({ type: "permission.respond", sessionId: req.sessionId, requestId: req.requestId, decision: allow ? "allow" : "deny" });
+    }
+  }
+  asking = false;
+}
 
 type Outgoing = ClientMessage extends infer T ? (T extends unknown ? Omit<T, "v" | "reqId"> : never) : never;
 
@@ -117,6 +145,12 @@ ws.on("message", (raw) => {
   if (m.type === "session.updated") return;
   if ("sessionId" in m && m.sessionId && m.sessionId !== sessionId) return;
   render(m);
+  if (m.type === "permission.resolved") answered.add(m.requestId);
+  if (m.type === "permission.request") {
+    permissionQueue.push(m);
+    // Requests seen during replay may already be resolved later in the replay.
+    if (subscribed) void answerPermissions();
+  }
   if (m.type === "turn.complete") {
     if (prompt) {
       ws.close();
@@ -151,6 +185,8 @@ async function main(welcome: Extract<ServerMessage, { type: "welcome" }>) {
   const afterSeq = values["after-seq"] !== undefined ? Number(values["after-seq"]) : undefined;
   const sub = await send({ type: "session.subscribe", sessionId, ...(afterSeq !== undefined ? { afterSeq } : {}) });
   if (sub.type !== "session.subscribed") process.exit(1);
+  subscribed = true;
+  void answerPermissions();
 
   if (prompt) {
     await send({ type: "session.send", sessionId, text: prompt });

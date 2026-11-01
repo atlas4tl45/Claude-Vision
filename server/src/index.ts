@@ -7,7 +7,7 @@ import { ConfigError, loadConfig, loadEnvFile } from "./config.ts";
 import { Logger } from "./logger.ts";
 import { startServer } from "./server.ts";
 import { SessionManager } from "./session.ts";
-import { MemoryStore } from "./store.ts";
+import { SqliteStore } from "./sqliteStore.ts";
 
 const serverRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 loadEnvFile(process.env.CV_ENV_FILE ?? join(serverRoot, ".env"));
@@ -27,7 +27,7 @@ mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
 const logger = new Logger({ dir: config.logDir, level: config.logLevel, console: process.stdout.isTTY });
 
 const backend = config.agentBackend === "fake" ? new FakeAgentBackend(30) : new SdkAgentBackend(logger);
-const store = new MemoryStore();
+const store = new SqliteStore(join(config.dataDir, "sessions.db"));
 const sessions = new SessionManager({ projectsRoot: config.projectsRoot, store, backend, logger, model: config.model });
 
 const server = await startServer({ host: config.host, port: config.port, token: config.token, sessions, logger });

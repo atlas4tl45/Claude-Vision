@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
+  PermissionDecision,
+  PermissionResolver,
   SessionEvent,
   SessionInfo,
   SessionState,
@@ -8,6 +10,13 @@ import type { AgentBackend, AgentEvent, AgentRun, PermissionAnswer, PermissionAs
 import type { Logger } from "./logger.ts";
 import { resolveWithinRoot } from "./paths.ts";
 import type { SessionRecord, SessionStore } from "./store.ts";
+import { classifyTool, completedEditDiff, EDIT_TOOLS, editTargetWithin, proposedDiff, truncate } from "./tools.ts";
+
+interface PendingPermission {
+  toolName: string;
+  input: Record<string, unknown>;
+  resolve: (answer: PermissionAnswer) => void;
+}
 
 // Distributive Omit so each union member keeps its own fields.
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -37,6 +46,9 @@ export class Session {
   private rec: SessionRecord;
   private run: AgentRun | null = null;
   private listeners = new Set<SessionListener>();
+  private pending = new Map<string, PendingPermission>();
+  /** tool_use_id -> call, so results can be labeled and edits diffed. */
+  private toolCalls = new Map<string, { name: string; input: Record<string, unknown> }>();
 
   private readonly deps: SessionDeps;
 
@@ -72,10 +84,12 @@ export class Session {
 
   async interrupt(): Promise<void> {
     if (!this.run) return;
+    this.cancelAllPermissions();
     await this.run.interrupt();
   }
 
   stop(): void {
+    this.cancelAllPermissions();
     if (this.run) {
       const run = this.run;
       this.run = null;
@@ -86,6 +100,30 @@ export class Session {
 
   setAutoApproveEdits(enabled: boolean): void {
     this.patch({ autoApproveEdits: enabled });
+    if (!enabled) return;
+    // Turning the toggle on also approves edits already waiting on the user.
+    for (const [id, p] of this.pending) {
+      if (this.isAutoApprovable(p.toolName, p.input)) this.resolvePermission(id, "allow", "auto");
+    }
+  }
+
+  respondPermission(requestId: string, decision: PermissionDecision, message?: string): void {
+    if (!this.pending.has(requestId)) {
+      throw new SessionError("not_found", `No pending permission request ${requestId}`);
+    }
+    this.resolvePermission(requestId, decision, "user", message);
+  }
+
+  /**
+   * Record permission requests left unresolved by a previous server process
+   * (e.g. a crash) as cancelled, so clients don't show dead Approve buttons.
+   */
+  cancelStalePermissions(): void {
+    for (const e of this.deps.store.pendingPermissionRequests(this.id)) {
+      if (e.type === "permission.request" && !this.pending.has(e.requestId)) {
+        this.record({ type: "permission.resolved", requestId: e.requestId, decision: "deny", resolvedBy: "cancelled" });
+      }
+    }
   }
 
   private ensureRunning() {
@@ -101,11 +139,68 @@ export class Session {
     });
   }
 
-  // Milestone 1: tool use is not wired to the client yet, so deny everything
-  // that reaches the prompt. Milestone 2 replaces this with the round-trip.
-  private async handlePermission(ask: PermissionAsk): Promise<PermissionAnswer> {
-    this.deps.logger.info("permission denied (not yet supported)", { sessionId: this.id, tool: ask.toolName });
-    return { behavior: "deny", message: "This client cannot approve tool use yet." };
+  /** Edits are auto-approvable only when the toggle is on and the target is inside the session cwd. */
+  private isAutoApprovable(toolName: string, input: Record<string, unknown>): boolean {
+    return this.rec.autoApproveEdits && EDIT_TOOLS.has(toolName) && editTargetWithin(this.rec.cwd, input);
+  }
+
+  /**
+   * Called by the agent whenever a tool needs approval (the SDK has already
+   * applied the user's own allow/deny rules from their Claude settings).
+   * Emits permission.request and waits for the client's permission.respond.
+   */
+  private handlePermission(ask: PermissionAsk): Promise<PermissionAnswer> {
+    const requestId = randomUUID();
+    const kind = classifyTool(ask.toolName);
+    let diff: string | undefined;
+    if (kind === "edit") {
+      try {
+        diff = proposedDiff(this.rec.cwd, ask.toolName, ask.input);
+      } catch (err) {
+        this.deps.logger.warn("could not build proposed diff", { error: (err as Error).message });
+      }
+    }
+    const promise = new Promise<PermissionAnswer>((resolve) => {
+      this.pending.set(requestId, { toolName: ask.toolName, input: ask.input, resolve });
+    });
+    this.record({
+      type: "permission.request",
+      requestId,
+      toolUseId: ask.toolUseId,
+      toolName: ask.toolName,
+      kind,
+      input: ask.input,
+      ...(ask.title ? { title: ask.title } : {}),
+      ...(ask.description ? { description: ask.description } : {}),
+      ...(diff ? { diff } : {}),
+    });
+
+    if (this.isAutoApprovable(ask.toolName, ask.input)) {
+      this.resolvePermission(requestId, "allow", "auto");
+    } else {
+      if (ask.signal.aborted) this.resolvePermission(requestId, "deny", "cancelled");
+      else ask.signal.addEventListener("abort", () => this.resolvePermission(requestId, "deny", "cancelled"), { once: true });
+      if (this.pending.has(requestId) && this.rec.state !== "awaiting_permission") this.setState("awaiting_permission");
+    }
+    return promise;
+  }
+
+  private resolvePermission(requestId: string, decision: PermissionDecision, by: PermissionResolver, message?: string) {
+    const p = this.pending.get(requestId);
+    if (!p) return;
+    this.pending.delete(requestId);
+    this.record({ type: "permission.resolved", requestId, decision, resolvedBy: by });
+    if (this.pending.size === 0 && this.rec.state === "awaiting_permission") this.setState("running");
+    this.deps.logger.info("permission resolved", { sessionId: this.id, tool: p.toolName, decision, by });
+    p.resolve(
+      decision === "allow"
+        ? { behavior: "allow" }
+        : { behavior: "deny", message: message || (by === "cancelled" ? "The request was cancelled." : "The user denied this action.") },
+    );
+  }
+
+  private cancelAllPermissions() {
+    for (const id of [...this.pending.keys()]) this.resolvePermission(id, "deny", "cancelled");
   }
 
   private onAgentEvent(e: AgentEvent) {
@@ -124,11 +219,32 @@ export class Session {
         this.record({ type: "assistant.text", messageId: e.messageId, blockIndex: e.blockIndex, text: e.text, ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) });
         return;
       case "tool_call":
+        this.toolCalls.set(e.toolUseId, { name: e.name, input: e.input });
         this.record({ type: "tool.call", toolUseId: e.toolUseId, name: e.name, input: e.input, ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) });
         return;
-      case "tool_result":
-        this.record({ type: "tool.result", toolUseId: e.toolUseId, isError: e.isError, content: e.content, ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}) });
+      case "tool_result": {
+        const call = this.toolCalls.get(e.toolUseId);
+        this.toolCalls.delete(e.toolUseId);
+        const { text, truncated } = truncate(e.content);
+        this.record({
+          type: "tool.result",
+          toolUseId: e.toolUseId,
+          isError: e.isError,
+          content: text,
+          ...(truncated ? { truncated } : {}),
+          ...(call ? { name: call.name } : {}),
+          ...(e.parentToolUseId ? { parentToolUseId: e.parentToolUseId } : {}),
+        });
+        if (call && !e.isError && EDIT_TOOLS.has(call.name)) {
+          try {
+            const edit = completedEditDiff(this.rec.cwd, call.input, e.structured);
+            if (edit) this.record({ type: "file.edit", toolUseId: e.toolUseId, path: edit.path, diff: edit.diff, created: edit.created });
+          } catch (err) {
+            this.deps.logger.warn("could not build edit diff", { error: (err as Error).message });
+          }
+        }
         return;
+      }
       case "turn_complete":
         this.record({
           type: "turn.complete",
@@ -146,6 +262,7 @@ export class Session {
         return;
       case "exit":
         this.run = null;
+        this.cancelAllPermissions();
         if (e.error) {
           this.record({ type: "error", code: "agent_error", message: e.error });
           this.setState("error", e.error);
@@ -206,6 +323,9 @@ export class SessionManager {
     // don't. Mark anything that was mid-flight as stopped; it resumes on demand.
     for (const rec of opts.store.listSessions()) {
       if (rec.state !== "stopped") opts.store.updateSession(rec.id, { state: "stopped" });
+      if (opts.store.pendingPermissionRequests(rec.id).length > 0) {
+        this.wrap({ ...rec, state: "stopped" }).cancelStalePermissions();
+      }
     }
   }
 
