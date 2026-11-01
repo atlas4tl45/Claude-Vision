@@ -3,8 +3,8 @@ name: TestFlight
 # Archives the visionOS app, signs it with cloud-managed certificates via an
 # App Store Connect API key, and uploads it to TestFlight.
 #
-# Required repository secrets: APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8
-# Required repository variable: BUNDLE_ID (e.g. com.yourname.ClaudeVision)
+# Required repository secrets: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8
+# The team ID and bundle ID come from the Xcode project (not secrets).
 #
 # Deliberately NOT triggered by pull_request, so signing secrets are only ever
 # used for commits already on main.
@@ -33,10 +33,9 @@ jobs:
     timeout-minutes: 60
     env:
       HEAD_SHA: ${{ github.sha }}
-      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      TEAM_ID: 8EQSL767FM
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
       # Build numbers must increase with every upload.
       BUILD_NUMBER: ${{ github.run_number }}
     steps:
@@ -46,11 +45,9 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           missing=""
-          [ -n "$TEAM_ID" ] || missing="$missing APPLE_TEAM_ID"
           [ -n "$ASC_KEY_ID" ] || missing="$missing ASC_KEY_ID"
           [ -n "$ASC_ISSUER_ID" ] || missing="$missing ASC_ISSUER_ID"
           [ -n "$ASC_KEY_P8" ] || missing="$missing ASC_KEY_P8"
-          [ -n "$BUNDLE_ID" ] || missing="$missing BUNDLE_ID(variable)"
           if [ -n "$missing" ]; then
             echo "::notice::TestFlight upload skipped; not configured:$missing"
             echo "configured=false" >> "$GITHUB_OUTPUT"
@@ -103,8 +100,6 @@ jobs:
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGN_STYLE=Automatic \
             2>&1 | tee -a "$RUNNER_TEMP/archive.log"
