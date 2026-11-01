@@ -20,7 +20,7 @@ import urllib.request
 DIAG = re.compile(r"^(?P<file>/[^:\n]+):(?P<line>\d+):(?:(?P<col>\d+):)? (?P<sev>error|warning): (?P<msg>.+)$")
 # Other lines worth surfacing: xcodebuild/SwiftPM errors and Swift Testing failures.
 NOTABLE = re.compile(r"(^error: |xcodebuild: error|\*\* BUILD FAILED \*\*|\*\* TEST FAILED \*\*|✘|recorded an issue|Expectation failed|fatal error"
-                     r"|\*\* BUILD SUCCEEDED \*\*|Test run with \d+ tests|Executed \d+ tests|-sdk xrsimulator|^Xcode \d|^Build version|Swift version)")
+                     r"|\*\* BUILD SUCCEEDED \*\*|Test run with \d+ tests|Executed \d+ tests|-sdk xrsimulator|-sdk xros|EXPORT SUCCEEDED|EXPORT FAILED|ARCHIVE SUCCEEDED|ARCHIVE FAILED|Upload succeeded|Uploaded |No profiles for|No Accounts|Provisioning profile|requires a provisioning profile|Signing for|Cloud signing|App Store Connect|ITMS-|^Xcode \d|^Build version|Swift version)")
 
 MAX_TEXT = 60000
 

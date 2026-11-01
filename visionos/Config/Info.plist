@@ -11,6 +11,8 @@
 		<key>UISceneConfigurations</key>
 		<dict/>
 	</dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Claude Vision connects to the Claude Code server running on your Mac.</string>
 	<key>NSAppTransportSecurity</key>

@@ -1,0 +1,155 @@
+name: TestFlight
+
+# Archives the visionOS app, signs it with cloud-managed certificates via an
+# App Store Connect API key, and uploads it to TestFlight.
+#
+# Required repository secrets: APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8
+# Required repository variable: BUNDLE_ID (e.g. com.yourname.ClaudeVision)
+#
+# Deliberately NOT triggered by pull_request, so signing secrets are only ever
+# used for commits already on main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "visionos/**"
+      - "protocol/**"
+      - ".github/workflows/testflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Archive and upload to TestFlight
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      HEAD_SHA: ${{ github.sha }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      # Build numbers must increase with every upload.
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Check configuration
+        id: config
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          [ -n "$TEAM_ID" ] || missing="$missing APPLE_TEAM_ID"
+          [ -n "$ASC_KEY_ID" ] || missing="$missing ASC_KEY_ID"
+          [ -n "$ASC_ISSUER_ID" ] || missing="$missing ASC_ISSUER_ID"
+          [ -n "$ASC_KEY_P8" ] || missing="$missing ASC_KEY_P8"
+          [ -n "$BUNDLE_ID" ] || missing="$missing BUNDLE_ID(variable)"
+          if [ -n "$missing" ]; then
+            echo "::notice::TestFlight upload skipped; not configured:$missing"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Select newest Xcode
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Ensure the visionOS platform is installed
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          if ! xcodebuild -showsdks | grep -q -- "-sdk xros"; then
+            xcodebuild -downloadPlatform visionOS
+          fi
+          xcodebuild -showsdks | grep -i vision || true
+
+      - name: Install API key
+        if: steps.config.outputs.configured == 'true'
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          chmod 600 "$KEY"
+          echo "ASC_KEY_PATH=$KEY" >> "$GITHUB_ENV"
+
+      - name: Archive
+        id: archive
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -o pipefail
+          xcodebuild -version > "$RUNNER_TEMP/archive.log"
+          xcodebuild archive \
+            -project visionos/ClaudeVision.xcodeproj \
+            -scheme ClaudeVision \
+            -destination 'generic/platform=visionOS' \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/ClaudeVision.xcarchive" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGN_STYLE=Automatic \
+            2>&1 | tee -a "$RUNNER_TEMP/archive.log"
+
+      - name: Export and upload
+        id: upload
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/ClaudeVision.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/upload.log"
+
+      - name: Remove API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
+
+      - name: Publish diagnostics
+        if: always() && steps.config.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          outcome=success
+          if [ "${{ steps.archive.outcome }}" != "success" ] || [ "${{ steps.upload.outcome }}" != "success" ]; then outcome=failure; fi
+          python3 .github/scripts/report-diagnostics.py \
+            --name "diagnostics: TestFlight upload (build $BUILD_NUMBER)" \
+            --outcome "$outcome" \
+            "$RUNNER_TEMP/archive.log" "$RUNNER_TEMP/upload.log"
