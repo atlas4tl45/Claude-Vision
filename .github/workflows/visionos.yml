@@ -1,0 +1,105 @@
+name: visionOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "visionos/**"
+      - "protocol/**"
+      - ".github/workflows/visionos.yml"
+      - ".github/scripts/report-diagnostics.py"
+  pull_request:
+    paths:
+      - "visionos/**"
+      - "protocol/**"
+      - ".github/workflows/visionos.yml"
+      - ".github/scripts/report-diagnostics.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: visionos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  kit-tests:
+    name: ClaudeVisionKit tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+          swift --version
+
+      - name: swift test
+        id: test
+        working-directory: visionos/ClaudeVisionKit
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/kit-tests.log"
+
+      - name: Publish diagnostics
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/report-diagnostics.py \
+            --name "diagnostics: ClaudeVisionKit tests" \
+            --outcome "${{ steps.test.outcome }}" \
+            "$RUNNER_TEMP/kit-tests.log"
+
+  app-build:
+    name: App build (visionOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | grep -v -i beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Ensure the visionOS SDK is installed
+        run: |
+          xcodebuild -showsdks | tee "$RUNNER_TEMP/sdks.txt"
+          if ! grep -q xrsimulator "$RUNNER_TEMP/sdks.txt"; then
+            echo "visionOS SDK missing; downloading the platform"
+            xcodebuild -downloadPlatform visionOS
+            xcodebuild -showsdks
+          fi
+
+      - name: Build
+        id: build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project visionos/ClaudeVision.xcodeproj \
+            -scheme ClaudeVision \
+            -destination 'generic/platform=visionOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$RUNNER_TEMP/app-build.log"
+
+      - name: Publish diagnostics
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/report-diagnostics.py \
+            --name "diagnostics: App build" \
+            --outcome "${{ steps.build.outcome }}" \
+            "$RUNNER_TEMP/app-build.log" "$RUNNER_TEMP/sdks.txt"
