@@ -25,14 +25,12 @@ public enum MessageBlocks {
 
         for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
             let trimmed = line.drop(while: { $0 == " " })
-            if !inCode, trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
+            if !inCode, let opening = openingFence(trimmed) {
                 flushProse()
-                fence = String(trimmed.prefix(3))
-                let info = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
-                language = info.isEmpty ? nil : String(info.split(separator: " ").first ?? "")
+                fence = opening.fence
+                language = opening.language
                 inCode = true
-            } else if inCode, let fenceChar = fence.first, trimmed.hasPrefix(fence),
-                      trimmed.drop(while: { $0 == fenceChar }).allSatisfy({ $0.isWhitespace }) {
+            } else if inCode, isClosingFence(trimmed, for: fence) {
                 blocks.append(.code(language: language, code: code.joined(separator: "\n")))
                 code.removeAll()
                 inCode = false
@@ -48,5 +46,24 @@ public enum MessageBlocks {
             flushProse()
         }
         return blocks
+    }
+
+    /// A run of 3+ backticks or tildes, then an optional info string (whose first word is the language).
+    /// Per CommonMark, a backtick fence's info string may not contain backticks.
+    static func openingFence(_ line: Substring) -> (fence: String, language: String?)? {
+        guard let first = line.first, first == "`" || first == "~" else { return nil }
+        let run = line.prefix(while: { $0 == first })
+        guard run.count >= 3 else { return nil }
+        let info = line.dropFirst(run.count).trimmingCharacters(in: .whitespaces)
+        if first == "`" && info.contains("`") { return nil }
+        let language = info.split(separator: " ").first.map(String.init)
+        return (String(run), language)
+    }
+
+    /// Closing fence: same character, at least as long as the opening run, nothing else but whitespace.
+    static func isClosingFence(_ line: Substring, for fence: String) -> Bool {
+        guard let fenceChar = fence.first else { return false }
+        let run = line.prefix(while: { $0 == fenceChar })
+        return run.count >= fence.count && line.dropFirst(run.count).allSatisfy { $0.isWhitespace }
     }
 }

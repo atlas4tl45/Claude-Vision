@@ -39,7 +39,7 @@ struct UserBubble: View {
                 .textSelection(.enabled)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
-                .background(.tint.opacity(0.35), in: RoundedRectangle(cornerRadius: 22))
+                .background(Color.accentColor.opacity(0.35), in: RoundedRectangle(cornerRadius: 22))
         }
         .accessibilityLabel("You: \(text)")
     }

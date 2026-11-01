@@ -26,8 +26,10 @@ struct TranscriptTests {
     @Test func duplicateAndOldEventsAreIgnored() {
         var t = Transcript()
         let delta = SessionEvent.assistantTextDelta(AssistantTextEvent(sessionId: "S", seq: 5, ts: "t", messageId: "m", blockIndex: 0, text: "x", parentToolUseId: nil))
-        #expect(t.apply(delta))
-        #expect(!t.apply(delta), "replayed after reconnect")
+        let first = t.apply(delta)
+        let second = t.apply(delta)
+        #expect(first)
+        #expect(!second, "replayed after reconnect")
         #expect(t.items.count == 1)
         #expect(t.items[0].kind == .assistant(text: "x", isComplete: false, parentToolUseId: nil))
     }

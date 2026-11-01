@@ -102,6 +102,9 @@ struct ServerAddressTests {
         #expect(ServerAddress.normalize(" 100.64.0.1:9000 ")?.absoluteString == "ws://100.64.0.1:9000/v1/ws")
         #expect(ServerAddress.normalize("ws://mini.tailnet.ts.net:8787/v1/ws")?.absoluteString == "ws://mini.tailnet.ts.net:8787/v1/ws")
         #expect(ServerAddress.normalize("https://mini.tailnet.ts.net")?.absoluteString == "wss://mini.tailnet.ts.net/v1/ws")
+        #expect(ServerAddress.normalize("HTTP://100.64.0.1")?.absoluteString == "ws://100.64.0.1:8787/v1/ws")
+        #expect(ServerAddress.normalize("fd7a:115c:a1e0::1")?.absoluteString == "ws://[fd7a:115c:a1e0::1]:8787/v1/ws")
+        #expect(ServerAddress.normalize("[fd7a:115c:a1e0::1]:9000")?.absoluteString == "ws://[fd7a:115c:a1e0::1]:9000/v1/ws")
         #expect(ServerAddress.normalize("") == nil)
         #expect(ServerAddress.normalize("ftp://x") == nil)
     }
@@ -114,6 +117,7 @@ struct BackoffTests {
         let upper = (0..<10).map { _ in b.next(random: { $0.upperBound }) }
         #expect(upper == [0.5, 1, 2, 4, 8, 16, 30, 30, 30, 30])
         b.reset()
-        #expect(b.next(random: { $0.lowerBound }) == 0.25, "floor prevents spinning")
+        let floor = b.next(random: { $0.lowerBound })
+        #expect(floor == 0.25, "floor prevents spinning")
     }
 }

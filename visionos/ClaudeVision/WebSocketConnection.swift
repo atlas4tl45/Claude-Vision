@@ -25,7 +25,10 @@ final class WebSocketConnection {
     init() {
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false
-        config.timeoutIntervalForRequest = 15
+        // For WebSocket tasks this acts as an idle timeout, so keep it well
+        // above the 20s app heartbeat. Connect hangs are caught by AppModel's
+        // handshake timeout.
+        config.timeoutIntervalForRequest = 90
         session = URLSession(configuration: config)
     }
 
@@ -38,7 +41,7 @@ final class WebSocketConnection {
 
         var request = URLRequest(url: url)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 15
+        request.timeoutInterval = 90
         let task = session.webSocketTask(with: request)
         task.maximumMessageSize = 16 * 1024 * 1024
         self.task = task
@@ -86,7 +89,7 @@ final class WebSocketConnection {
     }
 }
 
-enum AppError: LocalizedError {
+nonisolated enum AppError: LocalizedError {
     case notConnected
     case timeout
     case unexpectedReply

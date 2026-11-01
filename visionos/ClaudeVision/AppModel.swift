@@ -115,7 +115,7 @@ final class AppModel {
         status = .notConfigured
     }
 
-    enum SettingsError: LocalizedError {
+    nonisolated enum SettingsError: LocalizedError {
         case invalidAddress, missingToken
         var errorDescription: String? {
             switch self {
@@ -138,6 +138,8 @@ final class AppModel {
 
     func connect() {
         reconnectTask?.cancel()
+        // Replacing an open socket emits no close event, so clean up here.
+        tearDownSocket()
         guard let url = ServerAddress.normalize(serverAddress) else {
             status = .notConfigured
             return
@@ -163,11 +165,15 @@ final class AppModel {
     func disconnect() {
         userDisconnected = true
         reconnectTask?.cancel()
+        tearDownSocket()
+        status = serverAddress.isEmpty || !hasToken ? .notConfigured : .disconnected
+    }
+
+    private func tearDownSocket() {
         heartbeatTask?.cancel()
         handshakeTimeout?.cancel()
         connection.close()
         failAllPending(AppError.notConnected)
-        status = serverAddress.isEmpty || !hasToken ? .notConfigured : .disconnected
     }
 
     func reconnectNow() {
@@ -217,7 +223,7 @@ final class AppModel {
         guard welcome.protocolVersion == protocolVersion else {
             lastError = "Server speaks protocol v\(welcome.protocolVersion); this app speaks v\(protocolVersion). Update one of them."
             userDisconnected = true
-            connection.close()
+            tearDownSocket()
             status = .disconnected
             return
         }

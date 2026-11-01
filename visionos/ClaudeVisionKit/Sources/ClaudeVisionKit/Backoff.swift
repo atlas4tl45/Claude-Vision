@@ -38,9 +38,20 @@ public enum ServerAddress {
     public static func normalize(_ input: String) -> URL? {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        if text.hasPrefix("http://") { text = "ws://" + text.dropFirst("http://".count) }
-        if text.hasPrefix("https://") { text = "wss://" + text.dropFirst("https://".count) }
-        if !text.contains("://") { text = "ws://" + text }
+        if let range = text.range(of: "://") {
+            let scheme = text[..<range.lowerBound].lowercased()
+            let rest = text[range.upperBound...]
+            switch scheme {
+            case "http", "ws": text = "ws://" + rest
+            case "https", "wss": text = "wss://" + rest
+            default: return nil
+            }
+        } else if text.filter({ $0 == ":" }).count > 1, !text.contains("[") {
+            // A bare IPv6 address (e.g. Tailscale's fd7a:115c:a1e0::1).
+            text = "ws://[\(text)]"
+        } else {
+            text = "ws://" + text
+        }
         guard var components = URLComponents(string: text),
               let scheme = components.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
               let host = components.host, !host.isEmpty

@@ -28,6 +28,16 @@ struct MessageBlocksTests {
         #expect(MessageBlocks.parse("```\n```") == [.code(language: nil, code: "")])
     }
 
+    @Test func longerFencesCanContainShorterOnes() {
+        #expect(MessageBlocks.parse("````md\n```swift\nx\n```\n````") == [
+            .code(language: "md", code: "```swift\nx\n```"),
+        ])
+    }
+
+    @Test func inlineTripleBackticksAreNotAFence() {
+        #expect(MessageBlocks.parse("```code``` here") == [.prose("```code``` here")])
+    }
+
     @Test func backticksInsideCodeDoNotCloseADifferentFence() {
         #expect(MessageBlocks.parse("~~~\n```\n~~~") == [.code(language: nil, code: "```")])
     }

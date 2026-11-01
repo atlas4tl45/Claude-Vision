@@ -215,9 +215,19 @@ public struct Transcript: Sendable, Hashable {
             append(id: "turn-\(seq)", seq: seq, ts: ts, .turnComplete(TurnSummary(
                 subtype: e.subtype, isError: e.isError, durationMs: e.durationMs, totalCostUsd: e.totalCostUsd
             )))
+            // A finished turn can't still be waiting on approval: treat any
+            // request the server never resolved as cancelled.
+            for (_, i) in permissionIndex {
+                if case .permission(var p) = items[i].kind, p.isPending {
+                    p.decision = .deny
+                    p.resolvedBy = .cancelled
+                    items[i].kind = .permission(p)
+                    updateTool(p.toolUseId) { if $0.status == .awaitingPermission { $0.status = .denied } }
+                }
+            }
             // Any tool still marked running when the turn ends didn't report back.
             for (id, i) in toolIndex {
-                if case .tool(let t) = items[i].kind, t.status == .running || t.status == .awaitingPermission {
+                if case .tool(let t) = items[i].kind, t.status == .running {
                     updateTool(id) { $0.status = e.isError ? .failed : .succeeded }
                 }
             }

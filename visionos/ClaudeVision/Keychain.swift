@@ -5,7 +5,7 @@ import Security
 enum Keychain {
     static let service = "ClaudeVision.server"
 
-    enum KeychainError: LocalizedError {
+    nonisolated enum KeychainError: LocalizedError {
         case unexpectedStatus(OSStatus)
         var errorDescription: String? {
             switch self {
