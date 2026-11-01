@@ -1,0 +1,18 @@
+{
+  "hello": { "v": 1, "type": "hello", "reqId": "r1", "client": "ClaudeVision/0.1.0 visionOS" },
+  "ping": { "v": 1, "type": "ping", "reqId": "r2" },
+  "sessionCreate": { "v": 1, "type": "session.create", "reqId": "r3", "cwd": "my-app", "title": "My App", "autoApproveEdits": false },
+  "sessionCreateMinimal": { "v": 1, "type": "session.create", "reqId": "r4", "cwd": "my-app" },
+  "sessionList": { "v": 1, "type": "session.list", "reqId": "r5" },
+  "sessionSubscribe": { "v": 1, "type": "session.subscribe", "reqId": "r6", "sessionId": "S1", "afterSeq": 42 },
+  "sessionSubscribeFromStart": { "v": 1, "type": "session.subscribe", "reqId": "r7", "sessionId": "S1" },
+  "sessionUnsubscribe": { "v": 1, "type": "session.unsubscribe", "reqId": "r8", "sessionId": "S1" },
+  "sessionSend": { "v": 1, "type": "session.send", "reqId": "r9", "sessionId": "S1", "text": "Hello \"Claude\"\nsecond line ✨" },
+  "sessionInterrupt": { "v": 1, "type": "session.interrupt", "reqId": "r10", "sessionId": "S1" },
+  "sessionStop": { "v": 1, "type": "session.stop", "reqId": "r11", "sessionId": "S1" },
+  "setAutoApproveEdits": { "v": 1, "type": "session.setAutoApproveEdits", "reqId": "r12", "sessionId": "S1", "enabled": true },
+  "permissionAllow": { "v": 1, "type": "permission.respond", "reqId": "r13", "sessionId": "S1", "requestId": "P1", "decision": "allow" },
+  "permissionDeny": { "v": 1, "type": "permission.respond", "reqId": "r14", "sessionId": "S1", "requestId": "P1", "decision": "deny", "message": "Not now" },
+  "fsList": { "v": 1, "type": "fs.list", "reqId": "r15", "sessionId": "S1", "path": "src" },
+  "fsRead": { "v": 1, "type": "fs.read", "reqId": "r16", "sessionId": "S1", "path": "src/main.ts" }
+}

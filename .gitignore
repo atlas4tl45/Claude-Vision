@@ -8,3 +8,6 @@ visionos/**/xcuserdata/
 visionos/**/DerivedData/
 visionos/**/*.xcuserstate
 visionos/build/
+visionos/ClaudeVisionKit/.build/
+visionos/ClaudeVisionKit/.swiftpm/
+visionos/**/*.xcodeproj/project.xcworkspace/xcuserdata/

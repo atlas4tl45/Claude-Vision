@@ -75,6 +75,15 @@ function check(value: unknown, s: Schema, path: string, errors: string[]): void 
   }
 }
 
+/** Validate any value against a named $defs entry. Returns error strings (empty when valid). */
+export function validateAgainst(defName: string, value: unknown): string[] {
+  const def = defs[defName];
+  if (!def) throw new Error(`Unknown schema definition ${defName}`);
+  const errors: string[] = [];
+  check(value, def, "$", errors);
+  return errors;
+}
+
 export type ValidationResult =
   | { ok: true; message: ClientMessage }
   | { ok: false; code: "bad_request" | "unsupported_version"; error: string; reqId?: string };

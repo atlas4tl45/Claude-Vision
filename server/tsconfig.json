@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "test", "cli", "../protocol/generated"]
+  "include": ["src", "test", "cli", "scripts", "../protocol/generated"]
 }
