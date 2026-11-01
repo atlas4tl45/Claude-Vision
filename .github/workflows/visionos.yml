@@ -47,7 +47,8 @@ jobs:
         working-directory: visionos/ClaudeVisionKit
         run: |
           set -o pipefail
-          swift test 2>&1 | tee "$RUNNER_TEMP/kit-tests.log"
+          { xcodebuild -version; swift --version; } > "$RUNNER_TEMP/kit-tests.log" 2>&1
+          swift test 2>&1 | tee -a "$RUNNER_TEMP/kit-tests.log"
 
       - name: Publish diagnostics
         if: always()
@@ -85,6 +86,7 @@ jobs:
         id: build
         run: |
           set -o pipefail
+          xcodebuild -version > "$RUNNER_TEMP/app-build.log"
           xcodebuild \
             -project visionos/ClaudeVision.xcodeproj \
             -scheme ClaudeVision \
@@ -92,7 +94,7 @@ jobs:
             -configuration Debug \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tee "$RUNNER_TEMP/app-build.log"
+            build 2>&1 | tee -a "$RUNNER_TEMP/app-build.log"
 
       - name: Publish diagnostics
         if: always()
