@@ -1,0 +1,5 @@
+{
+  "name": "claude-vision-protocol",
+  "private": true,
+  "type": "module"
+}

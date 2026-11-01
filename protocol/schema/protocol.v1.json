@@ -1,0 +1,563 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claude-vision.local/protocol/v1",
+  "title": "Claude Vision WebSocket Protocol",
+  "description": "Every frame is one JSON object with a `v` (protocol version) and a `type` discriminator. Client requests may carry a `reqId`, which the server echoes on the matching reply. Session-scoped server events carry `sessionId` and a per-session monotonically increasing `seq`; they are persisted and replayed via `session.subscribe { afterSeq }`.",
+  "x-protocol-version": 1,
+  "$defs": {
+    "ProtocolVersion": { "type": "integer", "const": 1 },
+
+    "SessionState": {
+      "type": "string",
+      "enum": ["starting", "idle", "running", "awaiting_permission", "stopped", "error"]
+    },
+    "PermissionDecision": { "type": "string", "enum": ["allow", "deny"] },
+    "PermissionKind": { "type": "string", "enum": ["edit", "command", "read", "web", "other"] },
+    "PermissionResolver": { "type": "string", "enum": ["user", "auto", "cancelled"] },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "bad_request",
+        "unsupported_version",
+        "not_found",
+        "path_not_allowed",
+        "session_busy",
+        "session_stopped",
+        "agent_error",
+        "internal"
+      ]
+    },
+
+    "SessionInfo": {
+      "type": "object",
+      "required": ["id", "title", "cwd", "state", "autoApproveEdits", "createdAt", "updatedAt", "lastSeq"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "description": "Server session id (UUID). Also used as the Agent SDK session id." },
+        "title": { "type": "string" },
+        "cwd": { "type": "string", "description": "Absolute working directory, always inside the server's projects root." },
+        "state": { "$ref": "#/$defs/SessionState" },
+        "autoApproveEdits": { "type": "boolean" },
+        "createdAt": { "type": "string", "description": "ISO-8601 timestamp." },
+        "updatedAt": { "type": "string", "description": "ISO-8601 timestamp." },
+        "lastSeq": { "type": "integer", "description": "Highest event seq recorded for this session (0 if none)." }
+      }
+    },
+
+    "FsEntry": {
+      "type": "object",
+      "required": ["name", "path", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string", "description": "Path relative to the session cwd, using '/' separators." },
+        "kind": { "type": "string", "enum": ["file", "directory", "symlink", "other"] },
+        "size": { "type": "integer" }
+      }
+    },
+
+    "ClientHello": {
+      "type": "object",
+      "description": "Optional. Lets the client announce itself; the server answers with `welcome` regardless.",
+      "required": ["v", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "hello" },
+        "reqId": { "type": "string" },
+        "client": { "type": "string" }
+      }
+    },
+    "Ping": {
+      "type": "object",
+      "required": ["v", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "ping" },
+        "reqId": { "type": "string" }
+      }
+    },
+    "SessionCreate": {
+      "type": "object",
+      "required": ["v", "type", "cwd"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.create" },
+        "reqId": { "type": "string" },
+        "cwd": { "type": "string", "description": "Absolute path, or a path relative to the projects root. Must resolve inside the root." },
+        "title": { "type": "string" },
+        "autoApproveEdits": { "type": "boolean" }
+      }
+    },
+    "SessionList": {
+      "type": "object",
+      "required": ["v", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.list" },
+        "reqId": { "type": "string" }
+      }
+    },
+    "SessionSubscribe": {
+      "type": "object",
+      "description": "Subscribe to a session's event stream. Events with seq > afterSeq are replayed first, then live events follow. Resumes the agent if the session is stopped but resumable.",
+      "required": ["v", "type", "sessionId"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.subscribe" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "afterSeq": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "SessionUnsubscribe": {
+      "type": "object",
+      "required": ["v", "type", "sessionId"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.unsubscribe" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "SessionSend": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.send" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "SessionInterrupt": {
+      "type": "object",
+      "description": "Stop the current turn; the session stays alive.",
+      "required": ["v", "type", "sessionId"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.interrupt" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "SessionStop": {
+      "type": "object",
+      "description": "End the agent process for this session. It can be resumed later via session.subscribe or session.send.",
+      "required": ["v", "type", "sessionId"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.stop" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "SessionSetAutoApproveEdits": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.setAutoApproveEdits" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "PermissionRespond": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "requestId", "decision"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "permission.respond" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "requestId": { "type": "string" },
+        "decision": { "$ref": "#/$defs/PermissionDecision" },
+        "message": { "type": "string", "description": "Optional reason shown to the agent on deny." }
+      }
+    },
+    "FsList": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "fs.list" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "path": { "type": "string", "description": "Relative to the session cwd. '' or '.' for the cwd itself." }
+      }
+    },
+    "FsRead": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "path"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "fs.read" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    },
+
+    "Welcome": {
+      "type": "object",
+      "required": ["v", "type", "protocolVersion", "serverVersion", "projectsRoot"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "welcome" },
+        "reqId": { "type": "string" },
+        "protocolVersion": { "type": "integer" },
+        "serverVersion": { "type": "string" },
+        "projectsRoot": { "type": "string" }
+      }
+    },
+    "Pong": {
+      "type": "object",
+      "required": ["v", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "pong" },
+        "reqId": { "type": "string" }
+      }
+    },
+    "Ack": {
+      "type": "object",
+      "description": "Generic success reply for requests that return no data.",
+      "required": ["v", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "ack" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" }
+      }
+    },
+    "ErrorMessage": {
+      "type": "object",
+      "description": "Request failure (has reqId) or session-level error (has sessionId and seq).",
+      "required": ["v", "type", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "error" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": { "type": "string" }
+      }
+    },
+    "SessionCreated": {
+      "type": "object",
+      "required": ["v", "type", "session"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.created" },
+        "reqId": { "type": "string" },
+        "session": { "$ref": "#/$defs/SessionInfo" }
+      }
+    },
+    "SessionListResult": {
+      "type": "object",
+      "required": ["v", "type", "sessions"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.list.result" },
+        "reqId": { "type": "string" },
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/SessionInfo" } }
+      }
+    },
+    "SessionSubscribed": {
+      "type": "object",
+      "description": "Sent after replayed events and before live events.",
+      "required": ["v", "type", "session", "replayedThroughSeq"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.subscribed" },
+        "reqId": { "type": "string" },
+        "session": { "$ref": "#/$defs/SessionInfo" },
+        "replayedThroughSeq": { "type": "integer" }
+      }
+    },
+    "SessionUpdated": {
+      "type": "object",
+      "description": "Session metadata changed (title, state, autoApproveEdits). Broadcast to all connected clients.",
+      "required": ["v", "type", "session"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.updated" },
+        "session": { "$ref": "#/$defs/SessionInfo" }
+      }
+    },
+    "FsListResult": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "path", "entries"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "fs.list.result" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "path": { "type": "string" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/FsEntry" } }
+      }
+    },
+    "FsReadResult": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "path", "content", "truncated", "binary"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "fs.read.result" },
+        "reqId": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "path": { "type": "string" },
+        "content": { "type": "string", "description": "UTF-8 text. Empty when binary." },
+        "truncated": { "type": "boolean" },
+        "binary": { "type": "boolean" }
+      }
+    },
+
+    "SessionStatusEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "session.status" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "state": { "$ref": "#/$defs/SessionState" },
+        "detail": { "type": "string" }
+      }
+    },
+    "UserMessageEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "user.message" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "text": { "type": "string" }
+      }
+    },
+    "AssistantTextDeltaEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "messageId", "blockIndex", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "assistant.text_delta" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "messageId": { "type": "string" },
+        "blockIndex": { "type": "integer" },
+        "text": { "type": "string" },
+        "parentToolUseId": { "type": "string" }
+      }
+    },
+    "AssistantTextEvent": {
+      "type": "object",
+      "description": "The complete text of one assistant text block. Authoritative: replaces any deltas received for the same (messageId, blockIndex).",
+      "required": ["v", "type", "sessionId", "seq", "ts", "messageId", "blockIndex", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "assistant.text" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "messageId": { "type": "string" },
+        "blockIndex": { "type": "integer" },
+        "text": { "type": "string" },
+        "parentToolUseId": { "type": "string" }
+      }
+    },
+    "ToolCallEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "toolUseId", "name", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "tool.call" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "toolUseId": { "type": "string" },
+        "name": { "type": "string" },
+        "input": { "type": "object", "additionalProperties": true },
+        "parentToolUseId": { "type": "string" }
+      }
+    },
+    "ToolResultEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "toolUseId", "isError", "content"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "tool.result" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "toolUseId": { "type": "string" },
+        "name": { "type": "string" },
+        "isError": { "type": "boolean" },
+        "content": { "type": "string", "description": "Text content of the result, truncated server-side if very large." },
+        "truncated": { "type": "boolean" },
+        "parentToolUseId": { "type": "string" }
+      }
+    },
+    "FileEditEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "toolUseId", "path", "diff"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "file.edit" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "toolUseId": { "type": "string" },
+        "path": { "type": "string", "description": "Path relative to the session cwd when inside it, otherwise absolute." },
+        "diff": { "type": "string", "description": "Unified diff (---/+++ headers, @@ hunks)." },
+        "created": { "type": "boolean" }
+      }
+    },
+    "PermissionRequestEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "requestId", "toolUseId", "toolName", "kind", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "permission.request" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "requestId": { "type": "string" },
+        "toolUseId": { "type": "string" },
+        "toolName": { "type": "string" },
+        "kind": { "$ref": "#/$defs/PermissionKind" },
+        "input": { "type": "object", "additionalProperties": true },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "diff": { "type": "string", "description": "Proposed change as a unified diff, for edit requests." }
+      }
+    },
+    "PermissionResolvedEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "requestId", "decision", "resolvedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "permission.resolved" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "requestId": { "type": "string" },
+        "decision": { "$ref": "#/$defs/PermissionDecision" },
+        "resolvedBy": { "$ref": "#/$defs/PermissionResolver" }
+      }
+    },
+    "TurnCompleteEvent": {
+      "type": "object",
+      "required": ["v", "type", "sessionId", "seq", "ts", "isError", "subtype"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "turn.complete" },
+        "sessionId": { "type": "string" },
+        "seq": { "type": "integer" },
+        "ts": { "type": "string" },
+        "subtype": { "type": "string" },
+        "isError": { "type": "boolean" },
+        "durationMs": { "type": "integer" },
+        "numTurns": { "type": "integer" },
+        "totalCostUsd": { "type": "number" },
+        "resultText": { "type": "string" }
+      }
+    },
+
+    "ClientMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/ClientHello" },
+        { "$ref": "#/$defs/Ping" },
+        { "$ref": "#/$defs/SessionCreate" },
+        { "$ref": "#/$defs/SessionList" },
+        { "$ref": "#/$defs/SessionSubscribe" },
+        { "$ref": "#/$defs/SessionUnsubscribe" },
+        { "$ref": "#/$defs/SessionSend" },
+        { "$ref": "#/$defs/SessionInterrupt" },
+        { "$ref": "#/$defs/SessionStop" },
+        { "$ref": "#/$defs/SessionSetAutoApproveEdits" },
+        { "$ref": "#/$defs/PermissionRespond" },
+        { "$ref": "#/$defs/FsList" },
+        { "$ref": "#/$defs/FsRead" }
+      ]
+    },
+    "SessionEvent": {
+      "description": "Persisted, sequenced, replayable events.",
+      "oneOf": [
+        { "$ref": "#/$defs/SessionStatusEvent" },
+        { "$ref": "#/$defs/UserMessageEvent" },
+        { "$ref": "#/$defs/AssistantTextDeltaEvent" },
+        { "$ref": "#/$defs/AssistantTextEvent" },
+        { "$ref": "#/$defs/ToolCallEvent" },
+        { "$ref": "#/$defs/ToolResultEvent" },
+        { "$ref": "#/$defs/FileEditEvent" },
+        { "$ref": "#/$defs/PermissionRequestEvent" },
+        { "$ref": "#/$defs/PermissionResolvedEvent" },
+        { "$ref": "#/$defs/TurnCompleteEvent" },
+        { "$ref": "#/$defs/ErrorMessage" }
+      ]
+    },
+    "ServerMessage": {
+      "oneOf": [
+        { "$ref": "#/$defs/Welcome" },
+        { "$ref": "#/$defs/Pong" },
+        { "$ref": "#/$defs/Ack" },
+        { "$ref": "#/$defs/ErrorMessage" },
+        { "$ref": "#/$defs/SessionCreated" },
+        { "$ref": "#/$defs/SessionListResult" },
+        { "$ref": "#/$defs/SessionSubscribed" },
+        { "$ref": "#/$defs/SessionUpdated" },
+        { "$ref": "#/$defs/FsListResult" },
+        { "$ref": "#/$defs/FsReadResult" },
+        { "$ref": "#/$defs/SessionStatusEvent" },
+        { "$ref": "#/$defs/UserMessageEvent" },
+        { "$ref": "#/$defs/AssistantTextDeltaEvent" },
+        { "$ref": "#/$defs/AssistantTextEvent" },
+        { "$ref": "#/$defs/ToolCallEvent" },
+        { "$ref": "#/$defs/ToolResultEvent" },
+        { "$ref": "#/$defs/FileEditEvent" },
+        { "$ref": "#/$defs/PermissionRequestEvent" },
+        { "$ref": "#/$defs/PermissionResolvedEvent" },
+        { "$ref": "#/$defs/TurnCompleteEvent" }
+      ]
+    }
+  }
+}

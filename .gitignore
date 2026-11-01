@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.log
+*.log.*
+.DS_Store
+# Xcode
+visionos/**/xcuserdata/
+visionos/**/DerivedData/
+visionos/**/*.xcuserstate
+visionos/build/
