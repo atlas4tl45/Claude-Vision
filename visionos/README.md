@@ -40,6 +40,15 @@ swift test
 
 These decode every frame in `protocol/fixtures/` (captured from the real server) and check that the Swift encoder produces exactly the client frames that the server's schema test validates. That catches protocol drift between Swift and TypeScript.
 
-## On your device
+## On your device via TestFlight (no Mac needed)
 
-Signing and Tailscale setup are covered in the top-level README (milestone 6). In short: set your Team and a unique bundle identifier on the ClaudeVision target (Signing & Capabilities), and point the app at your Mac's Tailscale address.
+`.github/workflows/testflight.yml` archives the app on GitHub's macOS runners, signs it with cloud-managed certificates, and uploads it to TestFlight. It runs on every push to `main` that touches `visionos/` or `protocol/`, and can also be started by hand from the Actions tab.
+
+You set this up once:
+
+1. A paid Apple Developer account. The team ID and bundle ID (`com.robertcasad.claudevision`) are in the Xcode project.
+2. An App Store Connect app record for that bundle ID, with platform visionOS.
+3. An App Store Connect API key with the Admin role, stored as GitHub repository secrets `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_KEY_P8` (the full `.p8` text).
+4. In App Store Connect under TestFlight → Internal Testing, add yourself to a group. Then install the TestFlight app on the Vision Pro.
+
+Build numbers come from the workflow run number, so every upload is newer than the last. Each run publishes a "diagnostics: TestFlight upload" check on its commit with the archive and upload output.
